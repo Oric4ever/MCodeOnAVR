@@ -4,11 +4,6 @@
 
 #define NON_BLOCKING 1
 
-#define IORESULT 0x300
-#define HLRESULT 0x302
-#define LBA_SECT 0xFF00
-#define DMA_ADDR 0xFF04
-
 #define param4  r18
 #define param4H r19
 #define param3  r20
@@ -38,9 +33,6 @@ BIOS:
     cpi  opL,6
     cpc  opH,Zero
     brsh unimplemented
-    sts  IORESULT,Zero            // default IORESULT = 0
-    sts  HLRESULT,Zero            // default HLRESULT = 0000
-    sts  HLRESULT+1,Zero
     ldi  ZH,hi8(pm(BIOS_Table))
     ldi  ZL,lo8(pm(BIOS_Table))
     add  ZL,opL
@@ -48,30 +40,22 @@ BIOS:
     ijmp
 
 WarmBoot:
-    ldi  YL,0xff
-    ldi  YH,0xfe
-    SETSP(Y)
     jmp  mcode_run
     
 unimplemented:
-    sts  IORESULT,opL
+    ser  result
     ret
 
 ConsoleOutput: jmp uart0_send
-    
+ConsoleInput:  jmp uart0_receive
 ConsoleStatus:
 #if NON_BLOCKING
     call uart0_status
 #else
     ser  result
 #endif
-    sts  IORESULT,result
     ret
 
-ConsoleInput:
-    call uart0_receive
-    sts  IORESULT,result
-    ret
 
 CMD17 = 0x40 + 17
 CMD24 = 0x40 + 24
@@ -149,10 +133,10 @@ receive_crc:
     clc
 mmc_read_end:
     rcall mmc_unselect
+    clr   result
     ret
 
 // 512-bytes sector write
-// Writes sector LBA_SECT from address DMA_ADDR 
 // Can be called from C:
 //   uses only call-used registers: r30-r31 (Z), r18-r25
 NewSectorWrite:
@@ -208,5 +192,6 @@ mmc_write_error:
     sec                     // timeout, no ready response
 mmc_write_end:
     rcall mmc_unselect
+    clr   result
     ret
 

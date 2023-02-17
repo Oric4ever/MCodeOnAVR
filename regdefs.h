@@ -1,24 +1,30 @@
 #define Zero    r1
 // r2 will be used as zero register in multiply routines
 
-#define FreeList    0x0318
-#define StackLimit  0x0316
+#define FreeList    0x0118
 
 // warning: r2-r17 must be preserved in routines called from C
-#define op3     r8
-#define op3L    r8
-#define op3H    r9
-#define op3UL   r10
-#define op3UH   r11
-#define Local   r12
-#define LocalL  r12
-#define LocalH  r13
-#define Global  r14
-#define GlobalL r14
-#define GlobalH r15
-#define op      r16
-#define opL     r16
-#define opH     r17
+#define BigCarry    r3
+#define Reserve     r4
+#define ReserveL    r4
+#define ReserveH    r5
+#define StackLimit  r6
+#define StackLimitL r6
+#define StackLimitH r7
+#define op3         r8
+#define op3L        r8
+#define op3H        r9
+#define op3UL       r10
+#define op3UH       r11
+#define Local       r12
+#define LocalL      r12
+#define LocalH      r13
+#define Global      r14
+#define GlobalL     r14
+#define GlobalH     r15
+#define op          r16
+#define opL         r16
+#define opH         r17
 
 // warning: C routines might clobber r18-r27
 // so these have to be saved

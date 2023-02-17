@@ -2,15 +2,36 @@
 #include "regdefs.h"
 #include "macros.h"
 
-.global Allocate, Deallocate, Mark, Release
+.global   Allocate_with_tag,   Allocate_without_tag
+.global Deallocate_with_tag, Deallocate_without_tag, Mark, Release
 .text
 trace_relay: jmp trace
 
 #define FreeMarker  opU 
 #define FreeMarkerL opUL
 #define FreeMarkerH opUH
-Allocate:   // allocate op bytes 
-    POP1(op)           // op : the wanted block size
+
+
+Allocate_with_tag:
+    POP1(Y)             // size
+    adiw Y,2            // add two bytes for the tag
+    movw op,Y
+    rcall Allocate      // address of block in Z
+    POP1(Y)             // get the tag
+    st   Z+,YL          // write the tag
+    st   Z+,YH          // and Z now points to the record
+    rjmp store_alloc
+
+Allocate_without_tag:   // allocate op bytes 
+    POP1(op)            // op : the wanted block size
+    rcall Allocate      // address of block in Z
+store_alloc:
+    POP1(Y)             // get the address of the variable 
+    st   Y+,ZL          // and assign it the addr of the block found
+    st   Y+,ZH  
+    FFETCH
+
+Allocate:
     INC1(op)           // round to the above even value 
     andi op,0xfe
     cpi  opL,8         // allocate at least 8 bytes 
@@ -67,17 +88,16 @@ Error14: ERROR(14)
 
 NoAdequateBlock:        // here we reached the end of free-blocks list, so 
                         // we allocate in the remaining Big Block 
-    lds  ZL,StackLimit+0// the Big Block is 60 bytes before the stack limit
-    lds  ZH,StackLimit+1
+    mov  ZL,StackLimitL // the Big Block is 60 bytes before the stack limit
+    mov  ZH,StackLimitH
     movw Y,Z            // calculate the new stack limit
     add  YL,opL
     adc  YH,opH
-    GETSP(op2)          // check if the stack limit would be crossed
-    cp   op2L,YL
-    cpc  op2H,YH
-    brlo Error5
-    sts  StackLimit+0,YL// set the new stack limit
-    sts  StackLimit+1,YH
+    cp   YL,ReserveL
+    cpc  YH,ReserveH
+    brsh Error5
+    mov  StackLimitL,YL // set the new stack limit
+    mov  StackLimitH,YH
     sbiw Z,60           // ok so here is the block
     sbiw Y,60           // and the new remaining big block, mark it free
     st   Y+,FreeMarkerL 
@@ -97,34 +117,46 @@ TooSmall:
     rjmp SearchFreeList
 
 EndAllocate:
-    POP1(Y)             // get the address of the variable 
-    st   Y+,ZL          // and assign it the addr of the block found
-    st   Y+,ZH
+    movw Y,Z            // copy addr of block allocated
 EraseLoop:              // fill the block with zeroes
-    st   Z+,Zero
-    st   Z+,Zero
+    st   Y+,Zero
+    st   Y+,Zero
     subi opL,2
     sbc  opH,Zero
     brne EraseLoop
-    FFETCH              // and that's all
+    ret
     
     
 Error5: ERROR(5)
 NilPointer: ERROR(7)
 
-Deallocate: // DEALLOCATE(var_addr, size)
+Deallocate_with_tag:
+    POP1(Y)              // the block size
+    adiw  Y,2            // add two bytes for the tag
+    movw  op,Y
+    POP1(Y)              // addr of the variable
+    ld    ZL,Y           // get the variable value (block address) in Z
+    st    Y+,Zero        // and clear the variable
+    ld    ZH,Y
+    st    Y,Zero
+    sbiw  Z,2            // points to the tag
+    rjmp  Deallocate
+
+Deallocate_without_tag:
     POP1(op)             // op : the block size
+    POP1(Y)              // addr of the variable
+    ld    ZL,Y           // get the variable value (block address) in Z
+    st    Y+,Zero        // and clear the variable
+    ld    ZH,Y
+    st    Y,Zero
+Deallocate: // DEALLOCATE(var_addr, size)
     INC1(op)             // round to the above even value 
     andi  op,0xfe
     cpi   opL,8          // blocksize is at least 8 bytes 
     cpc   opH,Zero
     brsh  1f
     ldi   opL,8
-1:  POP1(Y)              // addr of the variable
-    ld    ZL,Y           // get the variable value (block address) in Z
-    st    Y+,Zero        // and clear the variable
-    ld    ZH,Y
-    st    Y,Zero
+1:
     cp    ZL,Zero        // test if NIL pointer
     cpc   ZH,Zero
     breq  NilPointer
@@ -171,8 +203,8 @@ test_if_last_block:
     movw  Y,Z           // test if the freed block is just under heap:
     add   YL,opL        // now Y points just after the freed block
     adc   YH,opH
-    lds   tmpL,StackLimit+0
-    lds   tmpH,StackLimit+1
+    mov   tmpL,StackLimitL
+    mov   tmpH,StackLimitH
     sbiw  tmp,60        // and here is the remaining memory
     cp    YL,tmpL
     cpc   YH,tmpH
@@ -180,8 +212,8 @@ test_if_last_block:
                         // yes : lower the stack limit
     movw  Y,Z
     adiw  Y,60
-    sts   StackLimit+0,YL
-    sts   StackLimit+1,YH
+    mov   StackLimitL,YL
+    mov   StackLimitH,YH
     st    Z+,FreeMarkerL// and put a marker
     st    Z+,FreeMarkerH
     rjmp  deallocate_end// and that's it
@@ -240,8 +272,8 @@ end_search:             // returns flag Z
 
 Mark:
     POP1(Y)             // addr of the variable
-    lds   tmpL,StackLimit+0
-    lds   tmpH,StackLimit+1
+    mov   tmpL,StackLimitL
+    mov   tmpH,StackLimitH
     sbiw  tmp,60        // now tmp is the start of the big block
     STORE1(tmp)         // assign the variable with the old heap
     movw  Y,tmp
@@ -251,8 +283,8 @@ Mark:
     LDIW(FREE_MARKER)   // put a marker at the beginning of new heap
     STORE1(tmp)         // now Y is +2 after the new heap
     adiw  Y,60-2        // update the new StackLimit too
-    sts   StackLimit+0,YL
-    sts   StackLimit+1,YH
+    mov   StackLimitL,YL
+    mov   StackLimitH,YH
     sts   FreeList,Zero // the new FreeList is empty
     sts   FreeList+1,Zero
     FFETCH
@@ -276,7 +308,7 @@ Release:
     sts  FreeList+1,opH
     st   Z+,tmpH
     adiw Z,60-2          // restore StackLimit 
-    sts  StackLimit+0,ZL
-    sts  StackLimit+1,ZH
+    mov  StackLimitL,ZL
+    mov  StackLimitH,ZH
     FFETCH
 

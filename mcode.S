@@ -2,8 +2,14 @@
 #include "regdefs.h"
 #include "macros.h"
 
-.global mcode_run, full_fetch, Error, OpcodeTable, LoadOverlay
+.global mcode_run, Error, OpcodeTable, OpcodeTable10, OpcodeTable80, halt
 .text
+
+Op_00: // IllegalInstruction
+    ERROR(16)
+
+Op_01:  // RAISE
+    ERROR(21)
 
 #define LOADPROCADDR PROCS SUBB(op) SUBB(op) LOAD ADD(tmp) PUSH1(Y)
 Op_02: IMMB(op) GLOBAL LOADPROCADDR FETCH
@@ -29,12 +35,12 @@ Op_0b: DLOADEXTERN   FETCH
 Op_0c: GETXTERNWORD1 FETCH
 
 
-#define LOADSTACKIDXBYTE  POP PPOP ADD(tmp) LOADBYTE PUSHBYTE
-#define LOADSTACKIDXWORD  POP PPOP SHL1 ADD(tmp) LOAD PUSH
-#define LOADSTACKIDXDWORD POP PPOP SHL2 ADD(tmp) DLOADPUSH
-Op_0d: LOADSTACKIDXBYTE  FETCH
-Op_0e: LOADSTACKIDXWORD  FETCH
-Op_0f: LOADSTACKIDXDWORD FETCH
+#define LOADARRAYBYTE  POP PPOP ADD(tmp) LOADBYTE PUSHBYTE
+#define LOADARRAYWORD  POP PPOP SHL1 ADD(tmp) LOAD PUSH
+#define LOADARRAYDWORD POP PPOP SHL2 ADD(tmp) DLOADPUSH
+Op_0d: LOADARRAYBYTE  FETCH
+Op_0e: LOADARRAYWORD  FETCH
+Op_0f: LOADARRAYDWORD FETCH
 
 
 #define LOADOUTERFRAME  LOCAL LOAD PUSH 
@@ -62,12 +68,12 @@ Op_1b: DSTOREXTERN     FETCH
 #define SETXTERNWORD1 IMM_NIBBLES MODULE ADDB(op2) POP STORE
 Op_1c: SETXTERNWORD1   FETCH
 
-#define STORESTACKIDXBYTE POP1(op) POP PPOP      ADD(tmp) st Y,op $
-#define STORESTACKIDXWORD POP1(op) POP PPOP SHL1 ADD(tmp) STORE1(op)
-#define STORESTACKIDXDWORD    DPOP POP PPOP SHL2 ADD(tmp) DSTORE
-Op_1d: STORESTACKIDXBYTE  FETCH
-Op_1e: STORESTACKIDXWORD  FETCH
-Op_1f: STORESTACKIDXDWORD FETCH
+#define STOREARRAYBYTE POP1(op) POP PPOP      ADD(tmp) st Y,op $
+#define STOREARRAYWORD POP1(op) POP PPOP SHL1 ADD(tmp) STORE1(op)
+#define STOREARRAYDWORD    DPOP POP PPOP SHL2 ADD(tmp) DSTORE
+Op_1d: STOREARRAYBYTE  FETCH
+Op_1e: STOREARRAYWORD  FETCH
+Op_1f: STOREARRAYDWORD FETCH
 
 Op_20: DUP  FETCH
 Op_21: SWAP FETCH
@@ -104,15 +110,9 @@ Op_31:  // copy string
     POP1(Y)     // source
     POP1(Z)     // dest
     tst  YH
-    brne 1f
-    tst  YL     // error 7 if NIL pointer
     breq Error7
-    dec  YH     // remap page 0 to $ff00
-1:  tst  ZH
-    brne 2f
-    tst  ZL     // error 7 if NIL pointer
+    tst  ZH
     breq Error7
-    dec  ZH     // remap page 0 to $ff00
     rjmp 2f
 5:  ld   op,Y+
     tst  op
@@ -176,14 +176,6 @@ Op_4c: GETGLOBALVAR(12) FETCH
 Op_4d: GETGLOBALVAR(13) FETCH
 Op_4e: GETGLOBALVAR(14) FETCH
 Op_4f: GETGLOBALVAR(15) FETCH
-
-Op_50: // End program, return to Shell
-    ldi  opH, hi8(0x030A)
-    ldi  opL, lo8(0x030A)
-    ldi  op2H,hi8(0x0308)
-    ldi  op2L,lo8(0x0308)
-    call Transfer
-    // hopefully, the halted coroutine will never be resumed to
 
 Ext_01: // Enter monitor
     in tmp,_SFR_IO_ADDR(SREG)
@@ -309,34 +301,42 @@ ExtOpcodeTable:
     rjmp Ext_10
     rjmp Ext_11
     rjmp Ext_12
-
-Op_87: // Z80 machine code
-Op_00: // IllegalInstruction
-    ldi  tmp,16
-    rjmp Error
-
-Error:
-    PUSHBYTE // push error code
-    PUSH0 
-    PUSH0
-Op_01:  // RAISE
-    ldi   opL, lo8(0x0306)
-    ldi   opH, hi8(0x0306)
-    ldi   op2L,lo8(0x0304)
-    ldi   op2H,hi8(0x0304)
-    call  Transfer
-    POP
-    POP
-    POP
-    ret
+    rjmp Ext_13
+    rjmp Ext_14
+    rjmp Ext_15
+    rjmp Ext_16
+    rjmp Ext_17
+    rjmp Ext_18
+    rjmp Ext_19
+    rjmp Ext_1a
+    rjmp Ext_1b
+    rjmp Ext_1c
+    rjmp Ext_1d
+    rjmp Ext_1e
+    rjmp Ext_1f
+    rjmp Ext_20
+    rjmp Ext_21
+    rjmp Ext_22
+    rjmp Ext_23
+    rjmp Ext_24
+    rjmp Ext_25
+    rjmp Ext_26
 
 NilPointer: ERROR(7)
 
 trace_relay: jmp trace
+
+Op_87: // machine code
+Op_c3: // legacy system call
+Ext_12:// make a local copy of an array on stack
+Op_d3: // make a local copy of an array on stack
+    
 Unimplemented:
 stop:
     call trace
     call dump
+Op_50: // HALT
+halt:
 1:  sleep
     rjmp 1b
     
@@ -351,8 +351,10 @@ Op_82: ADDRSTACKIDXWORD FETCH
 Op_83: ADDRXTERNWORD    FETCH
 
 #define LEAVE        \
-    bst  tmp,7      $\
+    bst   tmp,7      $\
     LOCAL            \
+    sbiw  Y,2        $\
+    LOAD1(Reserve)   $\
     LOAD1(op2)       \
     LOAD1(Local)     \
     ld    XL,Y+      $\
@@ -379,16 +381,13 @@ ReloadCallerModule:
     brne  2f
     tst   op2L
     breq  1f
-    ERROR(10)       // tried to return from the main module
+    ret             // return from the main module interpretation loop
 2:  movw  Global,op2
     GLOBAL
-    ld    tmp,Y
-    sbrc  tmp,0
-    rcall LoadOverlay
 1:  FETCH
 
-#define CALL_FORWARD IMMB(tmp) PUSH1(X) add XL,tmp $ adc XH,Zero $
-Op_8c:       CALL_FORWARD  FETCH
+#define PUSHSTR PUSH1(X) add XL,tmp $ adc XH,Zero $
+Op_8c: IMMB(tmp) PUSHSTR   FETCH
 Op_8d: IMMB(tmp) PUSHBYTE  FETCH
 Op_8e: IMMW(tmp) PUSH      FETCH
 Op_8f: IMMD(op)  DPUSH     FETCH
@@ -451,10 +450,7 @@ Op_90: PUSH0 FETCH
 
 Op_a0: POP1(op) POP EQUAL
 Op_a1: POP1(op) POP NOT_EQUAL
-Op_a2: POP1(op) POP LESS_THAN
-Op_a3: POP1(op) POP GREATER_THAN
-Op_a4: POP1(op) POP LESS_OR_EQ
-Op_a5: POP1(op) POP GREATER_OR_EQ
+
 Op_ab:          POP EQUAL0
 Op_cb:          POP NOT_ZERO
 True:
@@ -463,6 +459,76 @@ Op_b2: POP1(op) POP ILESS_THAN
 Op_b3: POP1(op) POP IGREATER_THAN
 Op_b4: POP1(op) POP ILESS_OR_EQ
 Op_b5: POP1(op) POP IGREATER_OR_EQ
+
+Op_a2: // replaced by INC_LOCAL_VAR
+    ld   YL,X+
+    mov  YH,Zero
+    lsl  YL
+    brcc 1f
+    dec  YH
+1:  add  YL,LocalL
+    adc  YH,LocalH
+    ld   tmpL,Y
+    inc  tmpL
+    st   Y+,tmpL
+    brne 2f
+    ld   tmpH,Y
+    inc  tmpH
+    st   Y,tmpH
+2:  FETCH
+
+Op_a3: // replaced by DEC_LOCAL_VAR
+    ld   YL,X+
+    mov  YH,Zero
+    lsl  YL
+    brcc 1f
+    dec  YH
+1:  add  YL,LocalL
+    adc  YH,LocalH
+    ld   tmpL,Y
+    subi tmpL,1
+    st   Y+,tmpL
+    brcc 2f
+    ld   tmpH,Y
+    subi tmpH,1
+    st   Y,tmpH
+2:  FETCH
+
+#define BRANCH_REL         add XL,tmpL $ adc XH,tmpH $
+Op_a4: // replaced LOWER_OR_EQ by LOOP_UNTIL_GREATER
+    ld   YL,X+
+    mov  YH,Zero
+    lsl  YL
+    brcc 1f
+    dec  YH
+1:  add  YL,LocalL
+    adc  YH,LocalH
+    LOAD
+    POP1(op)
+    COMPARE_INV
+loop_decision:
+    brlt loopend
+    PUSH1(op)
+    IMMW(tmp)
+    sbiw X,1
+    BRANCH_REL
+    FETCH
+loopend:
+    adiw X,2
+    FETCH
+
+Op_a5: // replaced HIGHER_OR_EQ by LOOP_UNTIL_LESS
+    ld   YL,X+
+    mov  YH,Zero
+    lsl  YL
+    brcc 1f
+    dec  YH
+1:  add  YL,LocalL
+    adc  YH,LocalH
+    LOAD
+    POP1(op)
+    COMPARE
+    rjmp loop_decision
 
 Op_a6: POP1(op)  POP      ADDITION   PUSH       FETCH
 Op_a7: POP1(op)  POP      SUBTRACT   PUSH       FETCH
@@ -556,7 +622,7 @@ Overflow: ERROR(12)
 Op_b8: POP1(op2) POP1(op) IMUL16_32 CHECK_INT2 PUSH FETCH
 Op_c2: POP1(op2) POP1(op) UMUL16_32 CHECK_CARD PUSH FETCH
 
-Op_c4: // string compare, mimic original behavior
+Op_c4: // string compare, push str1>str2 and then str1<str2
     POP1(op2)       // str2 size
     POP1(op)        // str1 size
     POP1(Z)         // str2 address
@@ -663,60 +729,22 @@ skip_case:
 Op_ce: POP1(X) FETCH
 Op_cf: IMMW(tmp) add tmpL,XL $ adc tmpH,XH $ sbiw tmp,1 $ PUSH FETCH
 
-#define CHECK_STACK          \
-    GETSP(Y)                 \
-    SUB(tmp)                 \
-    lds  op,StackLimit+1    $\
-    cp   op,YH              $\
-    brlo 1f                 $\
-    brne StackOverflow      $\
-    lds  op,StackLimit+0    $\
-    cp   op,YL              $\
-    brsh StackOverflow      $\
-1:
-    
-//#define CHECK_STACK GETSP(Y) SUB(tmp) cp YL,StackLimitL $ cpc YH,StackLimitH $ brlo StackOverflow
-
-Op_d2: // reserve bytes on stack, initialized to 0
+Op_d2: // reserve bytes on reserve stack
     POP                 // number of bytes to reserve
-    adiw tmp,1          // round number of bytes to even
-    andi tmpL,0xFE
-    CHECK_STACK
-    lsr  tmpH           // convert to number of words to reserve
-    ror  tmpL
-reserve_loop:
-    PUSH0
+    sub  ReserveL,tmpL
+    sbc  ReserveH,tmpH
+    cp   ReserveL,StackLimitL
+    cpc  ReserveH,StackLimitH
+    brlo ReserveOverflow
+    movw Y,Reserve
+reserve_loop:           // initialize the bytes to zeroes
+    st   Y+,Zero
     DEC
     brne reserve_loop
-    adiw Y,1            // adjust stack pointer due to AVR SP behavior
-    PUSH1(Y)            // push address of reserved area
+    PUSH1(Reserve)      // push address of reserved area
     FETCH
 
-Ext_12:
-Op_d3: // make a local copy of an array on stack
-    POP1(Z)             // get addr of parameter
-    tst ZH              // if in page 0, it's a fake parameter, feel free to move it
-    brne 1f
-    inc ZH
-1:  POP                 // get number of bytes to reserve
-    adiw tmp,1          // round number of bytes to even
-    andi tmpL,0xFE
-    add  ZL,tmpL        // prepare to copy the array backwards
-    adc  ZH,tmpH
-    CHECK_STACK
-    lsr  tmpH           // convert to number of words to reserve
-    ror  tmpL
-copy_loop:
-    ld   opH,-Z
-    ld   opL,-Z
-    PUSH1(op)
-    DEC
-    brne copy_loop
-    adiw Y,1            // adjust stack pointer due to AVR SP behavior
-    PUSH1(Y)            // push address of reserved area
-    FFETCH              // restore ZH
-    
-
+ReserveOverflow: ERROR(5)
 StackOverflow: ERROR(6)
 
 Op_d4:  // ENTER proc
@@ -724,41 +752,19 @@ Op_d4:  // ENTER proc
         PUSH1(Local)   // LOCAL[1]: previous Local
         push opH       // LOCAL[0]: outer frame or caller's global
         GETSP(Local)   // AVR's SP points to next byte to push
-        push opL
-        PUSH1(IP)      // LOCAL[-1]: addr of start of routine
-        com  tmpL      // calculate the nb of bytes to reserve for local vars
-        brne Reserve
-                       // faster if no reservation to do, but still we
-                       // check stack growth in case of infinite recursion
-        lds  tmp,StackLimit+1
-        cp   tmp,LocalH     // comparison of MSBs will be enough almost always
-        brsh 1f
-        FETCH
-1:      brne StackOverflow
-        lds  tmp,StackLimit // MSBs are equal, now compare LSBs
-        cp   tmp,LocalL
-        brsh StackOverflow
-        FETCH
-Reserve:
         movw Y,Local
+        push opL
+        PUSH1(Reserve) // LOCAL[-1]: old reserve pointer
+        com  tmpL      // calculate the nb of bytes to reserve for local vars
+        breq check_stack
+        sbiw Y,3       // 3 bytes have been pushed since SP was retrieved
         sub  YL,tmpL
         sbc  YH,Zero
-        lds  tmp,StackLimit+1   // check if StackLimit is reached
-        cp   tmp,YH      // comparing MSBs will be enough almost always
-        brlo 1f
-        brne StackOverflow
-        lds  tmp,StackLimit
-        cp   tmp,YL     // compare LSBs in case of tie
-        brsh StackOverflow
-1:                      // ok we can update stack pointer now 
-//                      // Normal version :
-//        sbiw Y,3      // take into account LOCAL[-1] and AVR's
-//        SETSP(Y)      // stack pointer (points to next byte to push)
-//        FETCH
-//                      // Alternative version just to have deterministic TOP=0000
-        sbiw Y,1        // LOCAL[-1] not taken into account
-        SETSP(Y)        // set stack pointer
-        PUSH0           // push the missing word with a defined 0 value
+        SETSP(Y)       // stack pointer (points to next byte to push)
+check_stack:
+        subi YL,0x20   // compare stack pointer to 0x0120
+        sbci YH,0x01
+        brcs StackOverflow
         FETCH
 
 #define FADD  movw Y,X $ call addsf3 $ movw X,Y $
@@ -803,7 +809,6 @@ Op_de: IMMB(tmpL) ANDBRANCH FETCH
 Op_df: IMMB(tmpL) ORBRANCH  FETCH
 ShortCut: PUSH1(op) rjmp BranchForward
 
-#define BRANCH_REL         add XL,tmpL $ adc XH,tmpH $
 #define BRANCH_FORWARD     add XL,tmpL $ adc XH,Zero $
 #define BRANCH_BACKWARD    sub XL,tmpL $ sbc XH,Zero $
 Op_e0: IMMB(tmpL) ld tmpH,X // don't increment IP yet
@@ -840,13 +845,6 @@ Op_ec: CALLINNERn  FETCH
 Op_ed: CALLTOPn    FETCH
 Op_ee: CALLOUTERn  FETCH
 
-Op_c3: // BDOS system call, module base and proc # must have been stored previously
-    lds   YL,0xff10     // BDOS module
-    lds   YH,0xff11
-    lds   op2L,0xff12   // procedure number of BDOS
-    lds   op2H,0xff13
-    lsl   op2
-    rjmp  OverlayTest
 Op_eb: // call external procedure, module base and proc # on stack
     PPOP
     POP1(op2)
@@ -875,18 +873,8 @@ CallExtProc:
     
 ModuleIsSwapped:
     PUSH1(op2)          // save proc num x2
-    movw  tmp,op        // save op (caller module)
-    rcall LoadOverlay
-    movw  op,tmp        // restore op
     POP1(op2)
     rjmp CallExtProc
-    
-LoadOverlay:    // Y is module to load
-    PUSH        // save tmp
-    ldi  tmp,1
-    rcall Error
-    POP         // restore tmp
-    ret
     
 
 Op_f1: CALLTOP(1)  FETCH
@@ -908,25 +896,26 @@ Op_ff: CALLTOP(15) FETCH
 #define DROP POP
 Ext_00: DROP FFETCH
 
-Ext_04: // build field mask
-    POP1(op) POWER2
+Ext_04: // build set range
+    POP1(op)
+    INC1(op)
+    POWER2
     movw op2,tmp
-    POP1(op) POWER2
-    sub tmpL,op2L
-    sbc tmpH,op2H
-    PUSH
-    FETCH
+    POP1(op)
+    POWER2
+    sub  op2L,tmpL
+    sbc  op2H,tmpH
+    PUSH1(op2)
+    FFETCH
     
-Ext_05: rjmp Allocate
-Ext_06: rjmp Deallocate
+Ext_05: rjmp Allocate_without_tag
+Ext_06: rjmp Deallocate_without_tag
 Ext_07: rjmp Mark
 Ext_08: rjmp Release
 Ext_09: // FREEMEM()
     GETSP(tmp)
-    lds opL,StackLimit+0
-    lds opH,StackLimit+1
-    sub tmpL,opL
-    sbc tmpH,opH
+    sub tmpL,StackLimitL
+    sbc tmpH,StackLimitH
     PUSH
     FFETCH
 
@@ -942,13 +931,7 @@ Ext_0e: // SYSTEM.MOVE
     cp    tmpL,Zero
     cpc   tmpH,Zero
     breq  move_end
-    tst   ZH
-    brne  1f
-    dec   ZH    // map page 0 to page FF
-1:  tst   YH
-    brne  2f
-    dec   YH    // map page 0 to page FF
-2:  cp    YL,ZL
+    cp    YL,ZL
     cpc   YH,ZH
     brsh  move_forward
                 // copy bytes starting from the end
@@ -970,12 +953,6 @@ Op_30:  // copy block
     cp   tmpL,Zero
     cpc  tmpH,Zero
     breq move_end
-    tst  YH
-    brne 1f
-    dec  YH     // remap page 0 to $ff00
-1:  tst  ZH
-    brne move_forward
-    dec  ZH     // remap page 0 to $ff00
 move_forward:
     ld    op,Y+
     st    Z+,op
@@ -992,9 +969,6 @@ Ext_0f: // SYSTEM.FILL
     cp    tmpL,Zero
     cpc   tmpH,Zero
     breq  fill_end
-    tst   ZH
-    brne  fill_loop
-    dec   ZH
 fill_loop:
     st    Z+,opL
     DEC
@@ -1014,6 +988,192 @@ Ext_11: // SYSTEM.OUT
     POP1(Y)     // I/O addr
     adiw Y,0x20
     st   Y,tmpL
+    FFETCH
+
+Ext_13:  // SCAN
+    POP1(op)    // byte to search
+    POP1(tmp)   // size
+    POP1(Z)     // start address
+    movw op2,Z  // save start address
+    cp   tmpL,Zero
+    cpc  tmpH,Zero
+    breq scan_end
+scan_loop:
+    ld   opH,Z+
+    cp   opL,opH
+    breq found_scan
+    DEC
+    brne scan_loop
+    rjmp scan_end
+found_scan:
+    sbiw Z,1        // Z was incremented too much
+scan_end:
+    sub  ZL,op2L
+    sbc  ZH,op2H
+    PUSH1(Z)
+    FFETCH
+
+Ext_14:  // ASSERT
+    POP1(Y)     // boolean to test
+    tst  YL
+    breq assert_failure
+    adiw X,2
+    FFETCH
+assert_failure:
+    jmp assert_fails
+    
+Ext_15: // ADDC
+    POP1(op)
+    POP1(tmp)
+    add  tmpL,opL
+    adc  tmpH,opH
+add_carry:
+    add  tmpL,BigCarry
+    adc  tmpH,Zero
+    mov  BigCarry,tmpH
+    PUSHBYTE
+    FFETCH
+    
+Ext_17: // MULC
+    POP1(op)
+    POP1(tmp)
+    mul  tmpL,opL
+    movw tmp,r0
+    clr  Zero
+    rjmp add_carry
+
+Ext_16: // SUBC
+    POP1(op)
+    POP1(tmp)
+    sub  tmpL,opL
+    sbc  tmpH,opH
+    sub  tmpL,BigCarry
+    sbc  tmpH,Zero
+    mov  BigCarry,Zero
+    lsl  tmpH
+    rol  BigCarry
+byte_result:
+    PUSHBYTE
+    FFETCH
+
+Ext_19: // CARRY
+    mov  tmp,BigCarry
+    rjmp byte_result
+
+Ext_1a: // CLC
+    mov  BigCarry,Zero
+    FFETCH
+
+Ext_18: // DIVC
+    POP1(op)    // divisor
+    POP1(tmp)   // dividend
+    add  tmpH,BigCarry
+    DIVIDE      // TODO: implement a 16 by 8 division instead
+    mov  BigCarry,op2L
+    PUSHBYTE
+    FFETCH
+
+Ext_1b: // TYPECHECK
+    POP1(op2)   // type tag2
+    POP1(Y)     // type tag1
+    tst  YH
+    breq end_typecheck
+typecheck_loop:
+    cp   YL,op2L
+    cpc  YH,op2H
+    breq end_typecheck
+    ld   tmp,Y+
+    ld   YH,Y
+    mov  YL,tmp
+    tst  YH
+    brne typecheck_loop
+    ERROR(27)
+end_typecheck:
+    adiw X,2    // skip line number
+    FFETCH
+
+Ext_1c: // SYS
+    POP1(tmp)
+    POP1(op)
+    rcall BIOS
+    PUSHBYTE
+    FFETCH
+
+Ext_1d: POP1(op)  POP      IDIVIDE      PUSH1(op2)  FFETCH // signed modulo
+Ext_1e: IMMB(op)  POP      ASHIFT_RIGHT PUSH        FFETCH // ASR
+Ext_1f: rjmp Allocate_with_tag
+Ext_20: rjmp Deallocate_with_tag
+Ext_21: // get tag
+    POP1(tmp)
+    tst  tmpH
+    breq 1f
+    movw Y,tmp
+    ld   tmpH,-Y
+    ld   tmpL,-Y
+1:  PUSH
+    FFETCH
+
+Ext_22: // CAP
+    pop  tmp
+    cpi  tmp,'a'
+    brlo end_cap
+    cpi  tmp,'z'+1
+    brsh end_cap
+    subi tmp,32
+end_cap:
+    push tmp
+    FFETCH
+
+Ext_23: // ASR
+    POP1(op)
+    POP1(tmp)
+    ASHIFT_RIGHT
+    PUSH
+    FFETCH
+
+Ext_24: // DASR
+    POP1(op)
+    POP1(tmp)
+    POP1(op2)
+1:  asr op2H
+    ror op2L
+    ror tmpH
+    ror tmpL
+    dec op
+    brne 1b
+    PUSH1(op2)
+    PUSH
+    FFETCH
+
+Ext_25: // LSL
+    POP1(op)
+    POP1(tmp)
+    SHIFT_LEFT
+    PUSH
+    FFETCH
+
+Ext_26: // DLSL
+    POP1(op)
+    POP1(tmp)
+    POP1(op2)
+1:  lsl tmpL
+    rol tmpH
+    rol op2L
+    rol op2H
+    dec op
+    brne 1b
+    PUSH1(op2)
+    PUSH
+    FFETCH
+
+module_run:
+    movw  Global,tmp
+    GLOBAL                          // jump to KERNEL's INIT
+    PROCS
+    JUMPPROC
+    PUSH0           // dummy IP to return to
+    clr   opH
+    ldi   opL,1     // ENTER will save outer Global as 1, which LEAVE will recognize
     FFETCH
 
 TestCode:
@@ -1097,8 +1257,8 @@ PUSHIMM(8)
     ldi   IPH,hi8(0x0350)
     ldi   tmpH, hi8(0x0370+60)
     ldi   tmpL, lo8(0x0370+60)
-    sts   StackLimit+0,tmpL
-    sts   StackLimit+1,tmpH
+    mov   StackLimitL,tmpL
+    mov   StackLimitH,tmpH
     ldi   tmpH, hi8(FREE_MARKER)
     ldi   tmpL, lo8(FREE_MARKER)
     sts   0x0370,tmpL
@@ -1109,26 +1269,36 @@ PUSHIMM(8)
 
 */
 
-    lds   GlobalL,0x0312
-    lds   GlobalH,0x0313
+    ldi   YL,0xff             // initialize stack to the end of internal memory
+    ldi   YH,0x04
+    SETSP(Y)
+
+    clr   ReserveL
+    clr   ReserveH
+    dec   ReserveH              // Reserve=FF00, keep last page for some variables
+
+    lds   StackLimitL,0x0316
+    lds   StackLimitH,0x0317
+
+    lds   tmpL,0x030C            // first module to run
+    lds   tmpH,0x030D
 
     clr   LocalL
     clr   LocalH
     inc   LocalL
 
-    GLOBAL                              // jump to KERNEL's INIT
-    PROCS
-    JUMPPROC
-    PUSH1(IP)       // so that KERNEL's INIT would be entered again in case it ends
-    clr   opH
-    ldi   opL,1     // saved Global will be 1
-    rcall init_fetch_pointer    // push a return to full_fetch
-full_fetch:
-    FFETCH
-
-init_fetch_pointer: // INCREDIBLE: the address on stack for (r)call/ret is in reverse order!!!
-    POP                 // store the address of full_fetch so
-    sts   0xff0c,tmpL   // that the kernel can return to it.
-    sts   0xff0d,tmpH
-    rjmp  full_fetch
+module_loop:
+    PUSH                        // save module-to-run
+    subi  tmpL,lo8(-80)         // add 80 for the module normal address
+    sbci  tmpH,hi8(-80)
+    rcall module_run
+    POP1(Y)                     // get module back
+    subi  YL,lo8(-64)           // point to the link to next module
+    sbci  YH,hi8(-64)
+    ld    tmpL,Y+
+    ld    tmpH,Y+
+    cp    tmpL,Zero
+    cpc   tmpH,Zero
+    brne  module_loop
+    jmp   halt
 

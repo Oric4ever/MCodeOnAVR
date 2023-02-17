@@ -7,7 +7,9 @@
 #define FFETCH      ldi ZH,hi8(pm(OpcodeTable)) $ FETCH
 
 #define GETSP(reg)  in reg##L,_SFR_IO_ADDR(SPL) $ in reg##H,_SFR_IO_ADDR(SPH) $
-// SETSP disable interrupts during intermediate state of SP
+
+// SETSP disable interrupts during intermediate state of SP,
+// but caution, don't use SETSP(tmp)
 #define SETSP(reg) \
     in   tmpH,_SFR_IO_ADDR(SREG)  $\
     cli                           $\
@@ -30,6 +32,7 @@
 #define SHL2        SHL1 SHL1
 #define SHIFT_LEFT  1: lsl tmp $ rol tmpH $ dec op $ brne 1b $
 #define SHIFT_RIGHT 1: lsr tmpH $ ror tmp $ dec op $ brne 1b $
+#define ASHIFT_RIGHT 1: asr tmpH $ ror tmp $ dec op $ brne 1b $
 #define ADD(reg)    add YL,reg##L $ adc YH,reg##H $
 #define ADDB(reg)   add YL,reg##L $ adc YH,Zero $
 

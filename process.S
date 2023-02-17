@@ -104,9 +104,7 @@ Transfer_cont:
     lds   ZL,FreeList 
     lds   ZH,FreeList+1 
     PUSH1(Z)        // word  5: FreeList
-    lds   ZL,StackLimit
-    lds   ZH,StackLimit+1
-    PUSH1(Z)        // word  4: StackLimit 
+    PUSH1(StackLimit)        // word  4: StackLimit 
     lds   tmp,0x0314// word  3: "Interrupt Disable" flag TODO: replace
     PUSHBYTE
     PUSH1(Global)   // word  2: Global (r14-15) (location as on Z80)
@@ -130,8 +128,8 @@ Transfer_cont:
     sts   0x0314,tmp
 
     POP1(Y)         // word  4: StackLimit
-    sts   StackLimit+0,YL
-    sts   StackLimit+1,YH
+    mov   StackLimitL,YL
+    mov   StackLimitH,YH
 
     // verify start of heap is free
     sbiw  Y,60
@@ -152,13 +150,6 @@ Transfer_cont:
     POP1(op2)       // word 10: op2
     POP1(op2U)      // word 11: op2U
     POP1(X)         // word 12: IP
-
-    GLOBAL
-    ld    tmpH,Y    // test bit 0 of GLOBAL[0]:
-    sbrc  tmpH,0    // skip following call if bit 0 is clear
-    call  LoadOverlay
-
-    movw  Y,Z       // restore Y
     POP1(Z)         // word 13: Z
     pop   tmp       // word 14: flags and r0
     pop   r0
